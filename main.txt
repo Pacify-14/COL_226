@@ -74,19 +74,17 @@ let string_of_val (e: Ast.expr) : string =
   | _ -> failwith "Not a final value"
 
 (* A value is a fully evaluated expression (primitive types only) *)
-(* Small-step evaluation: perform one reduction step. *)
-let rec is_val : Ast.expr -> bool = function
+let is_val : Ast.expr -> bool = function
   | Ast.Int _ | Ast.Float _ | Ast.Bool _ | Ast.String _ -> true
-  | Ast.Paren e -> is_val e  (* A parenthesized expression is a value if its content is a value *)
   | _ -> false
+
+(* Small-step evaluation: perform one reduction step. *)
 
 let rec step (e : Ast.expr) : Ast.expr =
   match e with
   | Ast.Int _ | Ast.Float _ | Ast.Bool _ | Ast.String _ ->
       failwith "Does not step further"
-  | Ast.Paren e ->
-    if is_val e then e
-    else Ast.Paren (step e)
+
   | Ast.Binop (bop, e1, e2) ->
       if is_val e1 && is_val e2 then step_bop bop e1 e2
       else if is_val e1 then Ast.Binop (bop, e1, step e2)
@@ -109,26 +107,18 @@ let rec step (e : Ast.expr) : Ast.expr =
 | Ast.IfElse (cond, e1, e2) ->
     Printf.printf "Checking IfElse condition: %s\n" (string_of_expr cond);
     
-    (* Helper function to unwrap parentheses *)
-    let rec unwrap_paren e =
+    (* First, evaluate the condition fully *)
+    let rec eval_cond e =
       match e with
-      | Ast.Paren inner -> unwrap_paren inner
-      | _ -> e
-    in
-    
-    (* First try to unwrap any parentheses in the condition *)
-    let unwrapped_cond = unwrap_paren cond in
-    
-    (* Then evaluate the unwrapped condition *)
-    let cond_value = 
-      match unwrapped_cond with
-      | Ast.Var x ->
+      | Ast.Var x -> 
           (match List.assoc_opt x !env with
           | Some v -> v
           | None -> failwith ("Unbound variable in condition: " ^ x))
-      | _ -> eval unwrapped_cond
+      | Ast.Bool b -> e
+      | _ -> eval_cond (step e) (* For other expressions, step once and recurse *)
     in
     
+    let cond_value = eval_cond cond in
     Printf.printf "Condition evaluated to: %s\n" (string_of_expr cond_value);
     
     match cond_value with
@@ -139,7 +129,7 @@ let rec step (e : Ast.expr) : Ast.expr =
         Printf.printf "Condition is FALSE, evaluating ELSE branch: %s\n" (string_of_expr e2);
         e2
     | _ -> failwith "Condition in IfElse did not evaluate to a boolean"
-  
+
           (*    | Ast.IfElse (cond, e1, e2) ->
       if is_val cond then
         (match cond with
@@ -190,7 +180,6 @@ let rec step (e : Ast.expr) : Ast.expr =
       failwith "For loop not implemented"
 
   | _ ->
-      Printf.printf "Unhandled expression type: %s\n" (string_of_expr e);
       failwith "Unhandled case in step function"
 
 and step_bop bop v1 v2 =
