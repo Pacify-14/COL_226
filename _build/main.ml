@@ -3,46 +3,50 @@ open Lexing
 open Ast
 
 (* Assuming Ast module is available and its constructors are as given *)
-let rec string_of_expr (e : Ast.expr) : string =
-  match e with
-  | Ast.Int i -> string_of_int i
-  | Ast.Float f -> string_of_float f
-  | Ast.String s -> "\"" ^ s ^ "\""
-  | Ast.Bool b -> string_of_bool b
-  | Ast.Var x -> x
-  | Ast.Binop (op, e1, e2) ->
-      "(" ^ string_of_expr e1 ^ " " ^ string_of_bop op ^ " " ^ string_of_expr e2 ^ ")"
-  | Ast.Assign (e1, e2) ->
-      string_of_expr e1 ^ " := " ^ string_of_expr e2
-  | Ast.Block es ->
-      "{" ^ String.concat "; " (List.map string_of_expr es) ^ "}"
-  | Ast.Print e ->
-      "Print(" ^ string_of_expr e ^ ")"
-  | Ast.WhileLoop (cond, body) ->
-      "While(" ^ string_of_expr cond ^ ") {" ^ string_of_expr (Ast.Block body) ^ "}"
-  | Ast.ForLoop (var, start, stop, body) ->
-      "For(" ^ var ^ " = " ^ string_of_expr start ^ " to " ^ string_of_expr stop ^ ") {" ^ string_of_expr (Ast.Block body) ^ "}"
-  | Ast.Transpose e -> "Transpose(" ^ string_of_expr e ^ ")"
-  | Ast.Det e -> "Det(" ^ string_of_expr e ^ ")"
-  | Ast.Dim1 e -> "Dim1(" ^ string_of_expr e ^ ")"
-  | Ast.Dim2 e -> "Dim2(" ^ string_of_expr e ^ ")"
-  | Ast.VecDim e -> "VecDim(" ^ string_of_expr e ^ ")"
-  | Ast.Vec_ix (x, e) -> x ^ "[" ^ string_of_expr e ^ "]"
-  | _ -> "<unknown>"
+let rec string_of_expr (e: expr) : string =
+    match e with
+    | Int i -> "Int(" ^ string_of_int i ^ ")"
+    | Float fl -> "Float(" ^ string_of_float fl ^ ")"
+    | String s -> "String(" ^ s ^ ")"
+    | Bool false -> "Bool(false)"
+    | Bool true -> "Bool(true)"
+    | Binop (Add, e1, e2) -> "Binop(+, " ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Sub, e1, e2) -> "Binop(-," ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Mul, e1, e2) -> "Binop(*," ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Mod, e1, e2) -> "Binop(%," ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Div, e1, e2) -> "Binop(/," ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Lt, e1, e2) -> "Binop(<," ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Gt, e1, e2) -> "Binop(>," ^ string_of_expr e2 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Le, e1, e2) -> "Binop(<=," ^ string_of_expr e2 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Ge, e1, e2) -> "Binop(>=," ^ string_of_expr e2 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Ne, e1, e2) -> "Binop(!=," ^ string_of_expr e2 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Eq, e1, e2) -> "Binop(=," ^ string_of_expr e2 ^ ", " ^ string_of_expr e2 ^ ")"
+  
+    | Boolop (And, e1, e2) -> "Boolop(And, " ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+  | Boolop (Or, e1, e2) -> "Boolop(Or, " ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+  | Boolop (Not, e1, e2) -> "Boolop(Not, " ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+  | IfElse (cond, e1, e2) -> "if " ^ string_of_expr cond ^ " then " ^ string_of_expr e1 ^ " else "^ string_of_expr e2
+  | Var id -> id
+  | Assign(var , value) -> "Assign(" ^string_of_expr var ^ " ," ^ string_of_expr value ^ ")"
+  | Paren e -> "(" ^ string_of_expr e ^ ")"
+  | Func (f, args) -> f ^ "(" ^ String.concat ", " (List.map string_of_expr args ) ^ ")"
+  
+  | Block(exprs) -> "{" ^ String.concat "; " (List.map string_of_expr exprs) ^ " }"
+  | ForLoop (var, start_expr, end_expr, body) -> "for "^var ^ " = " ^ string_of_expr start_expr ^ " ... " ^ string_of_expr end_expr ^ " { " ^ String.concat "; " (List.map string_of_expr body) ^ " }"
+  | WhileLoop (cond, body) -> "while " ^ string_of_expr cond ^ " { " ^ String.concat "; " (List.map string_of_expr body) ^ " }"
+  | Vector lst -> "Vector [" ^ String.concat ", " (List.map string_of_expr lst) ^ "]"
+    | Matrix rows ->
+        "Matrix [" ^ String.concat "; "
+          (List.map (fun row -> "[" ^ String.concat ", " (List.map string_of_expr row) ^ "]") rows) ^ "]"
+    | Transpose e -> "Transpose(" ^ string_of_expr e ^ ")"
+    | Det e -> "Det(" ^ string_of_expr e ^ ")"
+    | Dim1 e -> "Dim1(" ^ string_of_expr e ^ ")"
+    | Dim2 e -> "Dim2(" ^ string_of_expr e ^ ")"
+    | VecDim e -> "VecDim(" ^ string_of_expr e ^ ")"
+    | Inp e -> "Inp(" ^ string_of_expr e ^ ")"
+    | Print e -> "Print(" ^ string_of_expr e ^ ")"
+    | Vec_ix(var, exp) -> var ^ "[" ^ string_of_expr exp ^ "]"
 
-and string_of_bop op =
-  match op with
-  | Ast.Add -> "+"
-  | Ast.Sub -> "-"
-  | Ast.Mul -> "*"
-  | Ast.Div -> "/"
-  | Ast.Mod -> "mod"
-  | Ast.Lt -> "<"
-  | Ast.Gt -> ">"
-  | Ast.Le -> "<="
-  | Ast.Ge -> ">="
-  | Ast.Eq -> "=="
-  | Ast.Ne -> "<>"
 
 
 let parse s =
@@ -85,6 +89,10 @@ let rec step (e : Ast.expr) : Ast.expr =
       if is_val e1 && is_val e2 then step_bop bop e1 e2
       else if is_val e1 then Ast.Binop (bop, e1, step e2)
       else Ast.Binop (bop, step e1, e2)
+  | Ast.Boolop (boolop, e1, e2) -> 
+        if is_val e1 && is_val e2 then step_boolop boolop e1 e2
+        else if is_val e1 then Ast.Boolop (boolop, e1, step e2)
+        else Ast.Boolop (boolop, step e1, e2)
 
   (* Assignment: evaluate right-hand side fully, then update the environment *)
   | Ast.Assign (Ast.Var x, e_rhs) ->
@@ -126,8 +134,13 @@ and step_bop bop v1 v2 =
   | Ast.Le, Ast.Float a, Ast.Float b -> Ast.Bool (a <= b)
   | Ast.Ge, Ast.Int a, Ast.Int b -> Ast.Bool (a >= b)
   | Ast.Ge, Ast.Float a, Ast.Float b -> Ast.Bool (a >= b)
+  
   | _ -> failwith "Invalid operation or mismatched types"
-
+and step_boolop boolop v1 v2 = 
+  match boolop, v1 ,v2 with
+  | Ast.Or, Ast.Bool a, Ast.Bool b  -> Ast.Bool (a || b)
+  | Ast.Not, Ast.Bool a,Bool b -> Ast.Bool(not a)
+  | Ast.And, Ast.Bool a, Ast.Bool b -> Ast.Bool (a && b)
 (* Evaluate a block of expressions sequentially.
    Each expression is evaluated for its side effect (like assignment) and the value of the last expression is returned. *)
 and eval_block (es : Ast.expr list) : Ast.expr =

@@ -21,6 +21,19 @@
 /home/soumodeep/.opam/5.0.0/bin/ocamlc.opt -c -o lexer.cmo lexer.ml # cached
 # Target: main.cmo, tags: { byte, compile, extension:cmo, extension:ml, file:main.cmo, file:main.ml, implem, ocaml, quiet }
 /home/soumodeep/.opam/5.0.0/bin/ocamlc.opt -c -o main.cmo main.ml
++ /home/soumodeep/.opam/5.0.0/bin/ocamlc.opt -c -o main.cmo main.ml
+File "main.ml", lines 140-143, characters 2-56:
+140 | ..match boolop, v1 ,v2 with
+141 |   | Ast.Or, Ast.Bool a, Ast.Bool b  -> Ast.Bool (a || b)
+142 |   | Ast.Not, Ast.Bool a,Bool b -> Ast.Bool(not a)
+143 |   | Ast.And, Ast.Bool a, Ast.Bool b -> Ast.Bool (a && b)
+Warning 8 [partial-match]: this pattern-matching is not exhaustive.
+Here is an example of a case that is not matched:
+(Or, Bool _,
+(Int _|Float _|String _|Binop (_, _, _)|Inp _|Print _|Assign (_, _)|
+Boolop (_, _, _)|IfElse (_, _, _)|Var _|Func (_, _)|Paren _|Block _|
+WhileLoop (_, _)|ForLoop (_, _, _, _)|Vector _|Matrix _|Transpose _|Det _|
+Dim1 _|Dim2 _|VecDim _|Vec_ix (_, _)))
 # Target: ast.cmx, tags: { compile, extension:cmx, extension:ml, file:ast.cmx, file:ast.ml, implem, native, ocaml, quiet }
 /home/soumodeep/.opam/5.0.0/bin/ocamlopt.opt -c -o ast.cmx ast.ml # cached
 # Target: parser.ml.depends, tags: { extension:ml, file:parser.ml, ocaml, ocamldep, quiet }
@@ -31,6 +44,19 @@
 /home/soumodeep/.opam/5.0.0/bin/ocamlopt.opt -c -o lexer.cmx lexer.ml # cached
 # Target: main.cmx, tags: { compile, extension:cmx, extension:ml, file:main.cmx, file:main.ml, implem, native, ocaml, quiet }
 /home/soumodeep/.opam/5.0.0/bin/ocamlopt.opt -c -o main.cmx main.ml
++ /home/soumodeep/.opam/5.0.0/bin/ocamlopt.opt -c -o main.cmx main.ml
+File "main.ml", lines 140-143, characters 2-56:
+140 | ..match boolop, v1 ,v2 with
+141 |   | Ast.Or, Ast.Bool a, Ast.Bool b  -> Ast.Bool (a || b)
+142 |   | Ast.Not, Ast.Bool a,Bool b -> Ast.Bool(not a)
+143 |   | Ast.And, Ast.Bool a, Ast.Bool b -> Ast.Bool (a && b)
+Warning 8 [partial-match]: this pattern-matching is not exhaustive.
+Here is an example of a case that is not matched:
+(Or, Bool _,
+(Int _|Float _|String _|Binop (_, _, _)|Inp _|Print _|Assign (_, _)|
+Boolop (_, _, _)|IfElse (_, _, _)|Var _|Func (_, _)|Paren _|Block _|
+WhileLoop (_, _)|ForLoop (_, _, _, _)|Vector _|Matrix _|Transpose _|Det _|
+Dim1 _|Dim2 _|VecDim _|Vec_ix (_, _)))
 # Target: main.native, tags: { dont_link_with, extension:native, file:main.native, link, native, ocaml, program, quiet }
 /home/soumodeep/.opam/5.0.0/bin/ocamlopt.opt ast.cmx parser.cmx lexer.cmx main.cmx -o main.native
 # Compilation successful.
