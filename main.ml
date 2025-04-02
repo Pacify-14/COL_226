@@ -82,6 +82,11 @@ let rec is_val : Ast.expr -> bool = function
 
 let rec step (e : Ast.expr) : Ast.expr =
   match e with
+  | Ast.Print e ->
+      if not (is_val e) then
+        Ast.Print (step e)
+      else
+        (print_endline (string_of_val e); e)
   | Ast.Int _ | Ast.Float _ | Ast.Bool _ | Ast.String _ ->
       failwith "Does not step further"
   | Ast.Paren e ->
@@ -91,6 +96,10 @@ let rec step (e : Ast.expr) : Ast.expr =
       if is_val e1 && is_val e2 then step_bop bop e1 e2
       else if is_val e1 then Ast.Binop (bop, e1, step e2)
       else Ast.Binop (bop, step e1, e2)
+  | Ast.Boolop (boolop, e1, e2) -> 
+    if is_val e1 && is_val e2 then step_boolop boolop e1 e2
+    else if is_val e1 then Ast.Boolop (boolop, e1, step e2)
+    else Ast.Boolop (boolop, step e1, e2)
 
   | Ast.Assign (Ast.Var x, e_rhs) ->
       if is_val e_rhs then (
@@ -168,14 +177,8 @@ let rec step (e : Ast.expr) : Ast.expr =
 
   | Ast.Block es ->
       eval_block es
-
-  | Ast.Print e ->
-      if not (is_val e) then
-        Ast.Print (step e)
-      else
-        (print_endline (string_of_val e); e)
 *)
-  | Ast.WhileLoop (cond, body) ->
+   | Ast.WhileLoop (cond, body) ->
       if not (is_val cond) then
         Ast.WhileLoop (step cond, body)
       else
