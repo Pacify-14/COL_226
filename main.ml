@@ -53,6 +53,27 @@ let parse s =
   let lexbuf = Lexing.from_string s in
   Parser.prog Lexer.read lexbuf
 
+let is_square_matrix rows =
+  let n = List.length rows in
+  n > 0 && List.for_all (fun row -> List.length row = n) rows
+
+let rec calculate_determinant matrix =
+  match matrix with
+  | [] -> 0.0
+  | [[x]] -> x  (* 1x1 case *)
+  | [[a; b]; [c; d]] -> a *. d -. b *. c  (* 2x2 optimization *)
+  | _ ->
+      let first_row = List.hd matrix in
+      List.mapi (fun col x ->
+        let sign = if col mod 2 = 0 then 1.0 else -1.0 in
+        let minor =
+          List.tl matrix
+          |> List.map (fun row ->
+              List.filteri (fun i _ -> i <> col) row)
+        in
+        sign *. x *. calculate_determinant minor
+      ) first_row
+      |> List.fold_left (+.) 0.0
 
 (* Global environment: a reference to a list of variable bindings.
    Each binding maps a variable name (string) to an evaluated expression (of type Ast.expr). *)
@@ -173,16 +194,35 @@ let rec step (e : Ast.expr) : Ast.expr =
         | _ -> failwith "Dim2 requires a matrix")
 
   (* Matrix determinant (2x2 only) *)
-  | Ast.Det e ->
-      if not (is_val e) then Ast.Det (step e)
-      else (
-        match e with
-        | Ast.Matrix [[a; b]; [c; d]] ->
-            (match (a, b, c, d) with
-            | (Ast.Int a, Ast.Int b, Ast.Int c, Ast.Int d) ->
-                Ast.Int (a * d - b * c)
-            | _ -> failwith "Det requires integer elements")
-        | _ -> failwith "Det only implemented for 2x2 matrices")
+| Ast.Det e ->
+    if not (is_val e) then Ast.Det (step e)
+    else (
+      match e with
+      | Ast.Matrix rows ->
+          if not (is_square_matrix rows) then
+            failwith "Invalid dimensions: matrix must be square"
+          else
+            let matrix, all_ints =
+              List.fold_right (fun row (m_acc, int_acc) ->
+                let conv_row, row_ints =
+                  List.fold_right (fun elem (r_acc, ri_acc) ->
+                    match elem with
+                    | Ast.Int i -> (float_of_int i :: r_acc, ri_acc)
+                    | Ast.Float f -> (f :: r_acc, false)
+                    | _ -> failwith "Matrix contains non-numeric elements"
+                  ) row ([], true)
+                in
+                (conv_row :: m_acc, int_acc && row_ints)
+              ) rows ([], true)
+            in
+            let det = calculate_determinant matrix in
+            if all_ints && det = floor det then
+              Ast.Int (int_of_float det)
+            else
+              Ast.Float det
+      | _ -> failwith "Det requires a matrix"
+    )  
+
   | Ast.Assign (Ast.Var x, e_rhs) ->
       if is_val e_rhs then (
         env := (x, e_rhs) :: !env;
