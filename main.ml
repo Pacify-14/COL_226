@@ -83,6 +83,24 @@ let rec calculate_determinant matrix =
       ) first_row
       |> List.fold_left (+.) 0.0
 
+let rec transpose = function
+  | [] -> []
+  | [] :: _ -> []
+  | (x::xs) :: xss ->
+      (x :: List.map List.hd xss) :: transpose (xs :: List.map List.tl xss)
+
+let dot_product vec1 vec2 =
+  try List.fold_left2 (fun acc e1 e2 ->
+    match acc, e1, e2 with
+    | Ast.Int a, Ast.Int b, Ast.Int c -> Ast.Int (a + b * c)
+    | Ast.Float a, Ast.Int b, Ast.Int c -> Ast.Float (a +. float_of_int (b * c))
+    | Ast.Int a, Ast.Float b, Ast.Float c -> Ast.Float (float_of_int a +. b *. c)
+    | Ast.Float a, Ast.Float b, Ast.Float c -> Ast.Float (a +. b *. c)
+    | _ -> failwith "Non-numeric elements in dot product"
+  ) (Ast.Int 0) vec1 vec2
+  with Invalid_argument _ -> failwith "Dot product: length mismatch"
+
+
 (* Global environment: a reference to a list of variable bindings.
    Each binding maps a variable name (string) to an evaluated expression (of type Ast.expr). *)
 let env : (string * Ast.expr) list ref = ref []
@@ -238,8 +256,6 @@ let rec step (e : Ast.expr) : Ast.expr =
       ) else
         Ast.Assign (Ast.Var x, step e_rhs)
 
-  (*| Ast.Var x ->
-      lookup_env x *)
           | Ast.Var x ->
     (match List.assoc_opt x !env with
     | Some v -> v (* Replace variable with its assigned value *)
@@ -257,10 +273,8 @@ let rec step (e : Ast.expr) : Ast.expr =
       | _ -> e
     in
     
-    (* First try to unwrap any parentheses in the condition *)
     let unwrapped_cond = unwrap_paren cond in
-    
-    (* Then evaluate the unwrapped condition *)
+
     let cond_value = 
       match unwrapped_cond with
       | Ast.Var x ->
@@ -281,35 +295,6 @@ let rec step (e : Ast.expr) : Ast.expr =
         e2
     | _ -> failwith "Condition in IfElse did not evaluate to a boolean"
   
-          (*    | Ast.IfElse (cond, e1, e2) ->
-      if is_val cond then
-        (match cond with
-         | Ast.Bool true -> e1
-         | Ast.Bool false -> e2
-         | _ -> failwith "Condition in IfElse is not boolean")
-      else
-        Ast.IfElse (step cond, e1, e2)  
-*)
- (*       | Ast.IfElse (cond, e1, e2) ->
-    Printf.printf "Checking IfElse condition: %s\n" (string_of_expr cond);
-    if is_val cond then (
-      Printf.printf "Condition is a value: %s\n" (string_of_expr cond);
-      match cond with
-      | Ast.Bool true ->
-          Printf.printf "Condition is TRUE, evaluating THEN branch: %s\n" (string_of_expr e1);
-          e1
-      | Ast.Bool false ->
-          Printf.printf "Condition is FALSE, evaluating ELSE branch: %s\n" (string_of_expr e2);
-          e2
-      | _ -> failwith "Condition in IfElse is not boolean"
-    ) else (
-      Printf.printf "Condition is not a value, stepping...\n";
-      Ast.IfElse (step cond, e1, e2)
-    )
-
-  | Ast.Block es ->
-      eval_block es
-*)
    | Ast.WhileLoop (cond, body) ->
       if not (is_val cond) then
         Ast.WhileLoop (step cond, body)
@@ -328,36 +313,40 @@ let rec step (e : Ast.expr) : Ast.expr =
       Printf.printf "Unhandled expression type: %s\n" (string_of_expr e);
       failwith "Unhandled case in step function"
 
+
+(* Updated step_bop for multiplication *)
+(* Updated scalar multiplication section *)
 and step_bop bop v1 v2 =
   match bop, v1, v2 with
-  (* Scalar addition (existing code) *)
+  (* ------ Scalar Operations First ------ *)
+  (* Addition *)
   | Ast.Add, Ast.Int a, Ast.Int b -> Ast.Int (a + b)
   | Ast.Add, Ast.Float a, Ast.Float b -> Ast.Float (a +. b)
-  
-  (* Vector addition *)
-  | Ast.Add, Ast.Vector lst1, Ast.Vector lst2 ->
-      (try
-         Ast.Vector (List.map2 add_elements lst1 lst2)
-       with
-       | Invalid_argument _ -> failwith "Vector addition: length mismatch")
-  
-  (* Matrix addition *)
-  | Ast.Add, Ast.Matrix rows1, Ast.Matrix rows2 ->
-      (try
-         let added_rows = List.map2 (fun r1 r2 -> 
-           List.map2 add_elements r1 r2
-         ) rows1 rows2 in
-         Ast.Matrix added_rows
-       with
-       | Invalid_argument _ -> failwith "Matrix addition: dimension mismatch")
-  
+  | Ast.Add, Ast.Int a, Ast.Float b -> Ast.Float (float_of_int a +. b)
+  | Ast.Add, Ast.Float a, Ast.Int b -> Ast.Float (a +. float_of_int b)
+
+  (* Subtraction *)
   | Ast.Sub, Ast.Int a, Ast.Int b -> Ast.Int (a - b)
   | Ast.Sub, Ast.Float a, Ast.Float b -> Ast.Float (a -. b)
+  | Ast.Sub, Ast.Int a, Ast.Float b -> Ast.Float (float_of_int a -. b)
+  | Ast.Sub, Ast.Float a, Ast.Int b -> Ast.Float (a -. float_of_int b)
+
+  (* Multiplication - Scalars First *)
   | Ast.Mul, Ast.Int a, Ast.Int b -> Ast.Int (a * b)
   | Ast.Mul, Ast.Float a, Ast.Float b -> Ast.Float (a *. b)
+  | Ast.Mul, Ast.Int a, Ast.Float b -> Ast.Float (float_of_int a *. b)
+  | Ast.Mul, Ast.Float a, Ast.Int b -> Ast.Float (a *. float_of_int b)
+
+  (* Division *)
   | Ast.Div, Ast.Int a, Ast.Int b when b <> 0 -> Ast.Int (a / b)
   | Ast.Div, Ast.Float a, Ast.Float b when b <> 0.0 -> Ast.Float (a /. b)
+  | Ast.Div, Ast.Int a, Ast.Float b when b <> 0.0 -> Ast.Float (float_of_int a /. b)
+  | Ast.Div, Ast.Float a, Ast.Int b when b <> 0 -> Ast.Float (a /. float_of_int b)
+
+  (* Modulo *)
   | Ast.Mod, Ast.Int a, Ast.Int b when b <> 0 -> Ast.Int (a mod b)
+
+  (* Comparison Operators *)
   | Ast.Eq, Ast.Int a, Ast.Int b -> Ast.Bool (a = b)
   | Ast.Eq, Ast.Float a, Ast.Float b -> Ast.Bool (a = b)
   | Ast.Lt, Ast.Int a, Ast.Int b -> Ast.Bool (a < b)
@@ -368,8 +357,77 @@ and step_bop bop v1 v2 =
   | Ast.Le, Ast.Float a, Ast.Float b -> Ast.Bool (a <= b)
   | Ast.Ge, Ast.Int a, Ast.Int b -> Ast.Bool (a >= b)
   | Ast.Ge, Ast.Float a, Ast.Float b -> Ast.Bool (a >= b)
+
+  (* ------ Vector/Matrix Operations ------ *)
+  (* Vector addition *)
+  | Ast.Add, Ast.Vector lst1, Ast.Vector lst2 ->
+      (try Ast.Vector (List.map2 add_elements lst1 lst2)
+       with Invalid_argument _ -> failwith "Vector addition: length mismatch")
+
+  (* Matrix addition *)
+  | Ast.Add, Ast.Matrix rows1, Ast.Matrix rows2 ->
+      (try Ast.Matrix (List.map2 (fun r1 r2 -> List.map2 add_elements r1 r2) rows1 rows2)
+       with Invalid_argument _ -> failwith "Matrix addition: dimension mismatch")
+
+  (* Scalar * Vector *)
+  | Ast.Mul, (Ast.Int _ | Ast.Float _ as scalar), Ast.Vector vec ->
+      Ast.Vector (List.map (multiply_element scalar) vec)
+
+  (* Scalar * Matrix *)
+  | Ast.Mul, (Ast.Int _ | Ast.Float _ as scalar), Ast.Matrix rows ->
+      Ast.Matrix (List.map (List.map (multiply_element scalar)) rows)
+
+  (* Vector * Scalar (commutative) *)
+  | Ast.Mul, Ast.Vector vec, (Ast.Int _ | Ast.Float _ as scalar) ->
+      step_bop Ast.Mul scalar (Ast.Vector vec)
+
+  (* Matrix * Scalar (commutative) *)
+  | Ast.Mul, Ast.Matrix rows, (Ast.Int _ | Ast.Float _ as scalar) ->
+      step_bop Ast.Mul scalar (Ast.Matrix rows)
+
+  (* Vector dot product *)
+  | Ast.Mul, Ast.Vector vec1, Ast.Vector vec2 ->
+      dot_product vec1 vec2
+
+  (* Matrix multiplication *)
+  | Ast.Mul, Ast.Matrix m1, Ast.Matrix m2 ->
+      let cols_m1 = List.length (List.hd m1) in
+      let rows_m2 = List.length m2 in
+      if cols_m1 <> rows_m2 then
+        failwith "Matrix multiplication: cols(m1) != rows(m2)"
+      else
+        let m2_t = transpose m2 in
+        Ast.Matrix (
+          List.map (fun row ->
+            List.map (fun col -> dot_product row col) m2_t
+          ) m1
+        )
+
+  (* Matrix * Vector *)
+  | Ast.Mul, Ast.Matrix m, Ast.Vector v ->
+      if List.length (List.hd m) <> List.length v then
+        failwith "Matrix columns != Vector length"
+      else
+        Ast.Vector (List.map (fun row -> dot_product row v) m)
+
+  (* Vector * Matrix *)
+  | Ast.Mul, Ast.Vector v, Ast.Matrix m ->
+      if List.length v <> List.length m then
+        failwith "Vector length != Matrix rows"
+      else
+        let m_t = transpose m in
+        Ast.Vector (List.map (fun col -> dot_product v col) m_t)
+
+  (* ------ Fallthrough Error ------ *)
   | _ -> failwith "Invalid operation or mismatched types"
 
+and multiply_element scalar e =
+  match scalar, e with
+  | Ast.Int a, Ast.Int b -> Ast.Int (a * b)
+  | Ast.Float a, Ast.Int b -> Ast.Float (a *. float_of_int b)
+  | Ast.Int a, Ast.Float b -> Ast.Float (float_of_int a *. b)
+  | Ast.Float a, Ast.Float b -> Ast.Float (a *. b)
+  | _ -> failwith "Non-numeric multiplication"
 
 and step_boolop boolop v1 v2 = 
   match boolop, v1 ,v2 with
