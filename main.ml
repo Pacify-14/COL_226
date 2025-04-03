@@ -498,20 +498,26 @@ and vector_magnitude vec_expr =
 let rec repl () =
   try
     let input = read_line () in
-    if input = "exit" then ()  (* exit the REPL *)
+    (* Skip empty lines and comments *)
+    if String.trim input = "" || String.length input = 0 then repl ()
+    else if input = "exit" then ()  (* Optional exit command *)
     else (
       let lexbuf = Lexing.from_string input in
-      let ast = Parser.prog Lexer.read lexbuf in
-      Printf.printf "Parsed AST: %s\n" (string_of_expr ast);
-      let result = eval ast in
-      Printf.printf "Evaluated: %s\n" (string_of_expr result);
-      repl ()
-    )
+      try
+        let ast = Parser.prog Lexer.read lexbuf in
+        Printf.printf "Parsed AST: %s\n" (string_of_expr ast);
+        let result = eval ast in
+        Printf.printf "Result: %s\n" (string_of_val result);
+      with
+      | Parsing.Parse_error -> Printf.printf "Syntax error in: %s\n" input
+      | Failure msg -> Printf.printf "Error: %s\n" msg
+    );
+    repl ()  (* Process next line *)
   with
-  | End_of_file -> ()
-  | Parsing.Parse_error -> Printf.printf "Syntax error\n"; repl ()
-  | Failure msg -> Printf.printf "Error: %s\n" msg; repl ()
+  | End_of_file -> ()  (* Exit on EOF for file input *)
+  | exn ->
+      Printf.printf "Unexpected error: %s\n" (Printexc.to_string exn);
+      repl ()
 
-(* Start the REPL *)
+(* Start the REPL without initial prompt *)
 let () = repl ()
-
