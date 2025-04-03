@@ -224,6 +224,7 @@ let rec step (e : Ast.expr) : Ast.expr =
     if not (is_val e) then Ast.Det (step e)
     else (
       match e with
+      | Ast.Vector _ -> vector_magnitude e
       | Ast.Matrix rows ->
           if not (is_square_matrix rows) then
             failwith "Invalid dimensions: matrix must be square"
@@ -246,9 +247,15 @@ let rec step (e : Ast.expr) : Ast.expr =
               Ast.Int (int_of_float det)
             else
               Ast.Float det
-      | _ -> failwith "Det requires a matrix"
+      | _ -> failwith "det_mat requires vector or matrix"
     )  
-
+  | Ast.VecDim e ->
+      if not (is_val e) then Ast.VecDim (step e)
+      else (
+        match e with
+        | Ast.Vector vec -> Ast.Int (List.length vec)
+        | _ -> failwith "dim_vec requires a vector"
+      )
   | Ast.Assign (Ast.Var x, e_rhs) ->
       if is_val e_rhs then (
         env := (x, e_rhs) :: !env;
@@ -345,7 +352,30 @@ and step_bop bop v1 v2 =
 
   (* Modulo *)
   | Ast.Mod, Ast.Int a, Ast.Int b when b <> 0 -> Ast.Int (a mod b)
-
+| Ast.Lt, Ast.Vector v1, Ast.Vector v2 ->
+    if List.length v1 <> List.length v2 then
+      failwith "Vectors must have same dimension for angle calculation"
+    else
+      let vec1 = Ast.Vector v1 in  (* Create proper Vector expr *)
+      let vec2 = Ast.Vector v2 in  (* Create proper Vector expr *)
+      let dot = match dot_product v1 v2 with
+        | Ast.Int i -> float_of_int i
+        | Ast.Float f -> f
+        | _ -> failwith "Non-numeric dot product"
+      in
+      let mag1 = match vector_magnitude vec1 with
+        | Ast.Float f -> f
+        | _ -> failwith "Invalid magnitude calculation"
+      in
+      let mag2 = match vector_magnitude vec2 with
+        | Ast.Float f -> f
+        | _ -> failwith "Invalid magnitude calculation"
+      in
+      if mag1 = 0.0 || mag2 = 0.0 then
+        failwith "Cannot calculate angle with zero vector"
+      else
+        let cos_theta = dot /. (mag1 *. mag2) in
+        Ast.Float (acos cos_theta)
   (* Comparison Operators *)
   | Ast.Eq, Ast.Int a, Ast.Int b -> Ast.Bool (a = b)
   | Ast.Eq, Ast.Float a, Ast.Float b -> Ast.Bool (a = b)
@@ -451,6 +481,18 @@ and eval (e : Ast.expr) : Ast.expr =
   | _ ->
       if is_val e then e
       else eval (step e)
+and vector_magnitude vec_expr =
+  match vec_expr with
+  | Ast.Vector vec ->
+      let squares = List.map (function
+        | Ast.Int i -> float_of_int (i * i)
+        | Ast.Float f -> f *. f
+        | _ -> failwith "Vector magnitude requires numeric elements"
+      ) vec in
+      Ast.Float (sqrt (List.fold_left (+.) 0.0 squares))
+  | _ -> failwith "Magnitude requires a vector"
+
+(* Update Det case to handle vectors *)
 
 (* REPL: parse input, evaluate, and print the result *)
 let rec repl () =
