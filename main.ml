@@ -53,6 +53,14 @@ let parse s =
   let lexbuf = Lexing.from_string s in
   Parser.prog Lexer.read lexbuf
 
+let add_elements e1 e2 =
+  match e1, e2 with
+  | Ast.Int a, Ast.Int b -> Ast.Int (a + b)
+  | Ast.Float a, Ast.Float b -> Ast.Float (a +. b)
+  | Ast.Int a, Ast.Float b -> Ast.Float (float_of_int a +. b)
+  | Ast.Float a, Ast.Int b -> Ast.Float (a +. float_of_int b)
+  | _ -> failwith "Addition of non-numeric elements"
+
 let is_square_matrix rows =
   let n = List.length rows in
   n > 0 && List.for_all (fun row -> List.length row = n) rows
@@ -322,8 +330,27 @@ let rec step (e : Ast.expr) : Ast.expr =
 
 and step_bop bop v1 v2 =
   match bop, v1, v2 with
+  (* Scalar addition (existing code) *)
   | Ast.Add, Ast.Int a, Ast.Int b -> Ast.Int (a + b)
   | Ast.Add, Ast.Float a, Ast.Float b -> Ast.Float (a +. b)
+  
+  (* Vector addition *)
+  | Ast.Add, Ast.Vector lst1, Ast.Vector lst2 ->
+      (try
+         Ast.Vector (List.map2 add_elements lst1 lst2)
+       with
+       | Invalid_argument _ -> failwith "Vector addition: length mismatch")
+  
+  (* Matrix addition *)
+  | Ast.Add, Ast.Matrix rows1, Ast.Matrix rows2 ->
+      (try
+         let added_rows = List.map2 (fun r1 r2 -> 
+           List.map2 add_elements r1 r2
+         ) rows1 rows2 in
+         Ast.Matrix added_rows
+       with
+       | Invalid_argument _ -> failwith "Matrix addition: dimension mismatch")
+  
   | Ast.Sub, Ast.Int a, Ast.Int b -> Ast.Int (a - b)
   | Ast.Sub, Ast.Float a, Ast.Float b -> Ast.Float (a -. b)
   | Ast.Mul, Ast.Int a, Ast.Int b -> Ast.Int (a * b)
