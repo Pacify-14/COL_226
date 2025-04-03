@@ -65,20 +65,35 @@ let lookup_env (x : string) : Ast.expr =
 
 (* Convert a final evaluated expression to a string.
    Here we assume that final values are of type Int, Float, Bool, or String. *)
-let string_of_val (e: Ast.expr) : string =
+
+let rec string_of_val (e: Ast.expr) : string =
   match e with
   | Ast.Int i -> string_of_int i
   | Ast.Float f -> string_of_float f
   | Ast.Bool b -> string_of_bool b
   | Ast.String s -> "\"" ^ s ^ "\""
+  | Ast.Vector lst -> 
+      "[" ^ String.concat ", " (List.map string_of_val lst) ^ "]"
+  | Ast.Matrix rows ->
+      "[" ^ String.concat "; " 
+        (List.map (fun row -> 
+          "[" ^ String.concat ", " (List.map string_of_val row) ^ "]") rows) ^ "]"
   | _ -> failwith "Not a final value"
 
 (* A value is a fully evaluated expression (primitive types only) *)
 (* Small-step evaluation: perform one reduction step. *)
 let rec is_val : Ast.expr -> bool = function
   | Ast.Int _ | Ast.Float _ | Ast.Bool _ | Ast.String _ -> true
-  | Ast.Paren e -> is_val e  (* A parenthesized expression is a value if its content is a value *)
+  | Ast.Paren e -> is_val e
+  | Ast.Vector elements -> List.for_all is_val elements
+  | Ast.Matrix rows -> List.for_all (fun row -> List.for_all is_val row) rows
   | _ -> false
+
+let transpose rows =
+  match rows with
+  | [] -> []
+  | row :: _ ->
+      List.mapi (fun i _ -> List.map (fun r -> List.nth r i) rows) row
 
 let rec step (e : Ast.expr) : Ast.expr =
   match e with
@@ -96,11 +111,78 @@ let rec step (e : Ast.expr) : Ast.expr =
       if is_val e1 && is_val e2 then step_bop bop e1 e2
       else if is_val e1 then Ast.Binop (bop, e1, step e2)
       else Ast.Binop (bop, step e1, e2)
+  | Ast.Vector elements ->
+      let rec step_elements es =
+        match es with
+        | [] -> []
+        | e :: rest ->
+            if is_val e then e :: step_elements rest
+            else step e :: rest
+      in
+      Ast.Vector (step_elements elements) 
+
+  | Ast.Matrix rows ->
+      let rec eval_row row =
+        match row with
+        | [] -> []
+        | e :: rest ->
+            if is_val e then e :: eval_row rest
+            else step e :: rest
+      in
+      Ast.Matrix (List.map eval_row rows) 
+
+  | Ast.Vec_ix (var, index_expr) ->
+      if not (is_val index_expr) then
+        Ast.Vec_ix (var, step index_expr)
+      else
+        let idx = match index_expr with
+            | Ast.Int i -> i
+            | _ -> failwith "Vector index must be an integer"
+        in
+        let vec = lookup_env var in
+        (match vec with
+        | Ast.Vector elements ->
+            if idx >= 0 && idx < List.length elements then
+              List.nth elements idx
+            else
+              failwith ("Vector index out of bounds: " ^ string_of_int idx)
+        | _ -> failwith ("Variable '" ^ var ^ "' is not a vector"))
   | Ast.Boolop (boolop, e1, e2) -> 
     if is_val e1 && is_val e2 then step_boolop boolop e1 e2
     else if is_val e1 then Ast.Boolop (boolop, e1, step e2)
     else Ast.Boolop (boolop, step e1, e2)
+  | Ast.Transpose e ->
+      if not (is_val e) then Ast.Transpose (step e)
+      else (
+        match e with
+        | Ast.Matrix rows -> Ast.Matrix (transpose rows)
+        | _ -> failwith "Transpose requires a matrix")
+        | Ast.Dim1 e ->
+      if not (is_val e) then Ast.Dim1 (step e)
+      else (
+        match e with
+        | Ast.Matrix rows -> Ast.Int (List.length rows)
+        | _ -> failwith "Dim1 requires a matrix")
 
+  | Ast.Dim2 e ->
+      if not (is_val e) then Ast.Dim2 (step e)
+      else (
+        match e with
+        | Ast.Matrix [] -> Ast.Int 0
+        | Ast.Matrix (row :: _) -> Ast.Int (List.length row)
+        | _ -> failwith "Dim2 requires a matrix")
+
+  (* Matrix determinant (2x2 only) *)
+  | Ast.Det e ->
+      if not (is_val e) then Ast.Det (step e)
+      else (
+        match e with
+        | Ast.Matrix [[a; b]; [c; d]] ->
+            (match (a, b, c, d) with
+            | (Ast.Int a, Ast.Int b, Ast.Int c, Ast.Int d) ->
+                Ast.Int (a * d - b * c)
+            | _ -> failwith "Det requires integer elements")
+        | _ -> failwith "Det only implemented for 2x2 matrices")
   | Ast.Assign (Ast.Var x, e_rhs) ->
       if is_val e_rhs then (
         env := (x, e_rhs) :: !env;
@@ -114,7 +196,9 @@ let rec step (e : Ast.expr) : Ast.expr =
     (match List.assoc_opt x !env with
     | Some v -> v (* Replace variable with its assigned value *)
     | None -> failwith ("Unbound variable: " ^ x))
-
+          
+          
+          
 | Ast.IfElse (cond, e1, e2) ->
     Printf.printf "Checking IfElse condition: %s\n" (string_of_expr cond);
     
