@@ -274,7 +274,8 @@ let () =
   (* ---------- EDIT TEST ---------- *)
   test_case "edit test" (fun () ->
       let t = Node(("f",2), [| V "x"; V "y" |]) in
-      let edited = Edit.edit t [0] (Node(("h",0),[||])) in (*[0] ki jagha [|0|] if given as per the original test case then error is caused.*)
+      let pos = Array.to_list [|0|] in (*used to convert Array to list*)
+      let edited = Edit.edit t pos (Node(("h",0),[||])) in (*[0] ki jagha [|0|] if given as per the original test case then error is caused.*)
       match edited with
       | Node(("f",2),[| Node(("h",0),[||]); V "y" |]) -> ()
       | _ -> assert false
