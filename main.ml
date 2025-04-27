@@ -218,10 +218,10 @@ let () =
   test_case "size t_complex" (fun () ->
       assert (size t_complex = 8)
     );
-  test_case "vars t_complex" (fun () ->
-      let vs = VS.elements (vars t_complex) in
-      assert (List.sort compare vs = ["x"; "y"])
-    );
+  test_case "vars t_complex" (fun () -> 
+  let vs = VS.elements (vars t_complex) in
+  assert (vs = ["x"; "y"])
+);
   test_case "subst sub1 t_complex" (fun () ->
       let t' = Subst.subst sub1 t_complex in
     (* just check one spot *)
@@ -274,18 +274,22 @@ let () =
   (* ---------- EDIT TEST ---------- *)
   test_case "edit test" (fun () ->
       let t = Node(("f",2), [| V "x"; V "y" |]) in
-      let edited = Edit.edit t [0] (Node(("h",0),[||])) in
+      let edited = Edit.edit t [0] (Node(("h",0),[||])) in (*[0] ki jagha [|0|] if given as per the original test case then error is caused.*)
       match edited with
       | Node(("f",2),[| Node(("h",0),[||]); V "y" |]) -> ()
       | _ -> assert false
     );
 
   (* ---------- IN-PLACE SUBSTITUTION TEST ---------- *)
-  test_case "inplace_subst test" (fun () ->
-      let t = ref (Node(("f",2), [| V "x"; Node(("g",1),[| V "y" |]) |])) in
-      let sub = [("x", Node(("h",0),[||])); ("y", Node(("h",0),[||]))] in
-      Edit.subst_inplace sub !t;
-      match !t with
-      | Node(("f",2),[| Node(("h",0),[||]); Node(("g",1),[| Node(("h",0),[||]) |]) |]) -> ()
-      | _ -> assert false
-    )
+test_case "inplace_subst test" (fun () ->
+  let t = Node(("f", 2), [| V "x"; Node(("g", 1), [| V "y" |]) |]) in
+  let sub_func x = if x = "x" then Node(("h", 0), [||])
+                  else if x = "y" then Node(("h", 0), [||])
+                  else V x in
+  let vars = ["x"; "y"] in
+  let sub = List.map (fun x -> (x, sub_func x)) vars in
+  Edit.subst_inplace sub t;
+  match t with
+  | Node(("f", 2), [| Node(("h", 0), [||]); Node(("g", 1), [| Node(("h", 0), [||]) |]) |]) -> ()
+  | _ -> assert false
+)
