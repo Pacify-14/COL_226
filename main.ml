@@ -175,117 +175,117 @@ let comp = Subst.compose sub1 sub2
 let () =
   (* ---------- SIGNATURE TESTS ---------- *)
   test_case "check_sig sig_valid" (fun () ->
-    assert (check_sig sig_valid)
-  );
+      assert (check_sig sig_valid)
+    );
   test_case "check_sig sig_invalid_arity" (fun () ->
-    let sig_invalid_arity = [("f", -1); ("g", 2)] in
-    assert (not (check_sig sig_invalid_arity))
-  );
+      let sig_invalid_arity = [("f", -1); ("g", 2)] in
+      assert (not (check_sig sig_invalid_arity))
+    );
   test_case "check_sig sig_invalid_duplicate" (fun () ->
-    let sig_invalid_duplicate = [("f",  2); ("f", 3)] in
-    assert (not (check_sig sig_invalid_duplicate))
-  );
+      let sig_invalid_duplicate = [("f",  2); ("f", 3)] in
+      assert (not (check_sig sig_invalid_duplicate))
+    );
   test_case "check_sig sig_empty" (fun () ->
-    assert (check_sig [])
-  );
+      assert (check_sig [])
+    );
 
   (* ---------- WELL-FORMED TERM TESTS ---------- *)
   test_case "wfterm t_valid1" (fun () ->
-    let t_valid1 = Node(("f",2), [| V "x"; Node(("g",1), [| V "y" |]) |]) in
-    assert (wfterm sig_valid t_valid1)
-  );
+      let t_valid1 = Node(("f",2), [| V "x"; Node(("g",1), [| V "y" |]) |]) in
+      assert (wfterm sig_valid t_valid1)
+    );
   test_case "wfterm t_valid2" (fun () ->
-    let t_valid2 = Node(("i",3), [| Node(("h",0), [||]); V "z"; Node(("h",0), [||]) |]) in
-    assert (wfterm sig_valid t_valid2)
-  );
+      let t_valid2 = Node(("i",3), [| Node(("h",0), [||]); V "z"; Node(("h",0), [||]) |]) in
+      assert (wfterm sig_valid t_valid2)
+    );
   test_case "wfterm t_invalid1" (fun () ->
-    let t_invalid1 = Node(("f",2), [| V "x" |]) in
-    assert (not (wfterm sig_valid t_invalid1))
-  );
+      let t_invalid1 = Node(("f",2), [| V "x" |]) in
+      assert (not (wfterm sig_valid t_invalid1))
+    );
   test_case "wfterm t_invalid2" (fun () ->
-    let t_invalid2 = Node(("unknown",1), [| V "x" |]) in
-    assert (not (wfterm sig_valid t_invalid2))
-  );
+      let t_invalid2 = Node(("unknown",1), [| V "x" |]) in
+      assert (not (wfterm sig_valid t_invalid2))
+    );
 
   (* ---------- TERM-PROPERTY TESTS ---------- *)
   let t_complex = Node(("f",2), [|
       Node(("g",1), [| Node(("g",1), [| V "x" |]) |]);
       Node(("g",1), [| Node(("g",1), [| Node(("g",1), [| V "y" |]) |]) |])
-  |]) in
+    |]) in
   test_case "ht t_complex" (fun () ->
-    assert (ht t_complex = 4)
-  );
+      assert (ht t_complex = 4)
+    );
   test_case "size t_complex" (fun () ->
-    assert (size t_complex = 7)
-  );
+      assert (size t_complex = 8)
+    );
   test_case "vars t_complex" (fun () ->
-    let vs = VS.elements (vars t_complex) in
-    assert (List.sort compare vs = ["x"; "y"])
-  );
+      let vs = VS.elements (vars t_complex) in
+      assert (List.sort compare vs = ["x"; "y"])
+    );
   test_case "subst sub1 t_complex" (fun () ->
-    let t' = Subst.subst sub1 t_complex in
+      let t' = Subst.subst sub1 t_complex in
     (* just check one spot *)
-    match t' with
-    | Node(_, [| Node(_, [| Node(_, [| Node(("h",0),[||]) |]) |]); _ |]) -> ()
-    | _ -> assert false
-  );
+      match t' with
+      | Node(_, [| Node(_, [| Node(_, [| Node(("h",0),[||]) |]) |]); _ |]) -> ()
+      | _ -> assert false
+    );
   
   (* ---------- SUBSTITUTION COMPOSITION TESTS ---------- *)
   test_case "compose sub1 sub2 on x" (fun () ->
-    match Subst.subst comp (V "x") with Node(("h",0),[||]) -> () | _ -> assert false
-  );
+      match Subst.subst comp (V "x") with Node(("h",0),[||]) -> () | _ -> assert false
+    );
   test_case "compose sub1 sub2 on y" (fun () ->
-    match Subst.subst comp (V "y") with Node(("h",0),[||]) -> () | _ -> assert false
-  );
+      match Subst.subst comp (V "y") with Node(("h",0),[||]) -> () | _ -> assert false
+    );
   test_case "compose sub1 sub2 on z" (fun () ->
-    match Subst.subst comp (V "z") with V "z" -> () | _ -> assert false
-  );
+      match Subst.subst comp (V "z") with V "z" -> () | _ -> assert false
+    );
 
   (* ---------- MGU TESTS ---------- *)
   test_case "mgu trivial unification" (fun () ->
-    let t1, t2 = V "x", V "x" in
-    let u = Unify.mgu t1 t2 in
-    assert (Subst.subst u t1 = Subst.subst u t2)
-  );
+      let t1, t2 = V "x", V "x" in
+      let u = Unify.mgu t1 t2 in
+      assert (Subst.subst u t1 = Subst.subst u t2)
+    );
   test_case "mgu unify variable with node" (fun () ->
-    let t1, t2 = V "x", Node(("h",0),[||]) in
-    let u = Unify.mgu t1 t2 in
-    assert (Subst.subst u t1 = Subst.subst u t2)
-  );
+      let t1, t2 = V "x", Node(("h",0),[||]) in
+      let u = Unify.mgu t1 t2 in
+      assert (Subst.subst u t1 = Subst.subst u t2)
+    );
   test_case "mgu failure due to occurs check" (fun () ->
-    let t1, t2 = V "x", Node(("g",1),[| V "x" |]) in
-    try let _ = Unify.mgu t1 t2 in assert false 
-    with Unify.NOT_UNIFIABLE -> ()
-  );
+      let t1, t2 = V "x", Node(("g",1),[| V "x" |]) in
+      try let _ = Unify.mgu t1 t2 in assert false 
+      with Unify.NOT_UNIFIABLE -> ()
+    );
   test_case "mgu non-trivial unification" (fun () ->
-    let t1 = Node(("f",2),[| V "x"; V "y" |]) in
-    let t2 = Node(("f",2),[| Node(("g",1),[| V "z" |]); V "a" |]) in
-    let u = Unify.mgu t1 t2 in
+      let t1 = Node(("f", 2), [| V "x"; Node(("h", 0), [||]) |]) in
+      let t2 = Node(("f", 2), [| Node(("g", 1), [| V "z" |]); V "y" |]) in
+      let u = Unify.mgu t1 t2 in
     (* check one mapping, at least *)
-    assert (Subst.subst u (V "x") = Node(("g",1),[| V "z" |]))
-  );
+      assert (Subst.subst u t1 = Subst.subst u t2)
+    );
   test_case "mgu failure due to symbol mismatch" (fun () ->
-    let t1 = Node(("h",1),[| V "x" |]) in
-    let t2 = Node(("g",1),[| V "y" |]) in
-    try let _ = Unify.mgu t1 t2 in assert false 
-    with Unify.NOT_UNIFIABLE -> ()
-  );
+      let t1 = Node(("f", 2), [| V "x"; V "y" |]) in
+      let t2 = Node(("g", 2), [| V "x"; V "y" |]) in
+      try let _ = Unify.mgu t1 t2 in assert false 
+      with Unify.NOT_UNIFIABLE -> ()
+    );
 
   (* ---------- EDIT TEST ---------- *)
   test_case "edit test" (fun () ->
-    let t = Node(("f",2), [| V "x"; V "y" |]) in
-    let edited = Edit.edit t [0] (Node(("h",0),[||])) in
-    match edited with
-     | Node(("f",2),[| Node(("h",0),[||]); V "y" |]) -> ()
-     | _ -> assert false
-  );
+      let t = Node(("f",2), [| V "x"; V "y" |]) in
+      let edited = Edit.edit t [0] (Node(("h",0),[||])) in
+      match edited with
+      | Node(("f",2),[| Node(("h",0),[||]); V "y" |]) -> ()
+      | _ -> assert false
+    );
 
   (* ---------- IN-PLACE SUBSTITUTION TEST ---------- *)
   test_case "inplace_subst test" (fun () ->
-    let t = ref (Node(("f",2), [| V "x"; Node(("g",1),[| V "y" |]) |])) in
-    let sub = [("x", Node(("h",0),[||])); ("y", Node(("h",0),[||]))] in
-    Edit.subst_inplace sub !t;
-    match !t with
-    | Node(("f",2),[| Node(("h",0),[||]); Node(("g",1),[| Node(("h",0),[||]) |]) |]) -> ()
-    | _ -> assert false
-  )
+      let t = ref (Node(("f",2), [| V "x"; Node(("g",1),[| V "y" |]) |])) in
+      let sub = [("x", Node(("h",0),[||])); ("y", Node(("h",0),[||]))] in
+      Edit.subst_inplace sub !t;
+      match !t with
+      | Node(("f",2),[| Node(("h",0),[||]); Node(("g",1),[| Node(("h",0),[||]) |]) |]) -> ()
+      | _ -> assert false
+    )
