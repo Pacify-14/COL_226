@@ -286,7 +286,8 @@ let () =
   test_case "edit test" (fun () ->
     let t_editable = Node(("f",2), [| V "x"; V "y" |]) in
     (* Edit position needs to be a list, e.g., [0] for the first child *)
-    let edited = Edit.edit t_editable [0] (Node(("h",0),[||])) in
+    let pos = Array.to_list[|0|] in
+    let edited = Edit.edit t_editable pos (Node(("h",0),[||])) in
     match edited with
      | Node(("f",2),[| Node(("h",0),[||]); V "y" |]) -> ()
      | _ -> assert false
@@ -295,16 +296,16 @@ let () =
   (* ---------- IN-PLACE SUBSTITUTION TEST ---------- *)
   (* As noted before, inplace might not work with immutable terms. *)
   (* Testing standard substitution result instead. *)
-  test_case "inplace_subst test (standard subst check)" (fun () ->
-    let t = Node(("f", 2), [| V "x"; Node(("g", 1), [| V "y" |]) |]) in
-    let s : Subst.t = [("x", Node(("h", 0), [||])); ("y", Node(("h", 0), [||]))] in
-    let t_substituted_inplace = Subst.subst s t in
-    match t_substituted_inplace with
-     | Node(("f", 2), [| Node(("h", 0), [||]); Node(("g", 1), [| Node(("h", 0), [||]) |]) |]) -> ()
-     | _ -> assert false
-  );
-
-  (* Add closing parenthesis and semicolon for the main let () = ... block *)
+  test_case "inplace_subst test" (fun () ->
+  let t = Node(("f", 2), [| V "x"; Node(("g", 1), [| V "y" |]) |]) in
+  let sub_func x = if x = "x" then Node(("h", 0), [||])
+                  else if x = "y" then Node(("h", 0), [||])
+                  else V x in
+  let vars = ["x"; "y"] in
+  let sub = List.map (fun x -> (x, sub_func x)) vars in
+  Edit.subst_inplace sub t;
+  match t with
+  | Node(("f", 2), [| Node(("h", 0), [||]); Node(("g", 1), [| Node(("h", 0), [||]) |]) |]) -> ()
+  | _ -> assert false
+    );  (* Add closing parenthesis and semicolon for the main let () = ... block *)
   () (* End of the main test execution block *)
-
-(* Ensure the file ends correctly, without stray characters *)   
