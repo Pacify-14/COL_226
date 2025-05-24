@@ -1,296 +1,523 @@
-(* Module: Terms, Signatures, Substitutions, and Unification in OCaml *)
+(* Assume we open or reference Ast so that our AST constructors (Int, Float, Binop, Var, Assign, Block, Print, etc.) are in scope *)
+open Lexing
+open Ast
 
-module Term = struct
-  (* Variable and Symbol types *)
-  type variable = string
-  type symbol   = string * int    (* name and arity stored, but signature defines true arities *)
-
-  (* Pre-term and well-formed term representation using arrays *)
-  type preterm =
-    | V of variable
-    | Node of symbol * preterm array
-
-  (* A signature is a list of symbols with arities *)
-  type signature = symbol list
-
-  (* Check that a signature is valid: no duplicate names, non-negative arities *)
-  let check_sig (sig_ : signature) : bool =
-    let names = Hashtbl.create (List.length sig_) in
-    List.for_all (fun (s, ar) ->
-        ar >= 0 &&
-        if Hashtbl.mem names s then false
-        else ( Hashtbl.add names s (); true)
-      ) sig_
-
-  (* Lookup arity in signature *)
-  let arity_of (sig_ : signature) (name : string) : int =
-    try List.assoc name sig_ with Not_found -> -1
-
-  (* Well-formedness: each Node's symbol occurs in signature and has correct number of children *)
-  let rec wfterm (sig_ : signature) (t : preterm) : bool = match t with
-    | V _ -> true
-    | Node ((s, _), childs) ->
-        let expected = arity_of sig_ s in
-        expected >= 0 && Array.length childs = expected &&
-        Array.for_all (wfterm sig_) childs
-
-  (* Height of a term *)
-  let rec ht t = match t with
-    | V _ -> 0
-    | Node (_, childs) ->
-        if Array.length childs = 0 then 0
-        else 1 + Array.fold_left (fun acc t' -> max acc (ht t')) 0 childs
-
-  (* Size (# of nodes) of a term *)
-  let rec size t = match t with
-    | V _ -> 1
-    | Node (_, childs) ->
-        1 + Array.fold_left (fun acc t' -> acc + size t') 0 childs
-
-  (* Variables appearing in a term: use String Set *)
-  module VS = Set.Make(String)
-  let rec vars t = match t with
-    | V x -> VS.singleton x
-    | Node (_, childs) ->
-        Array.fold_left (fun acc t' -> VS.union acc (vars t')) VS.empty childs
-
-end
-
-module Subst = struct
-  open Term
-  (* A substitution is a mapping from variable to term, implemented as an assoc list for finite domain *)
-  type t = (variable * preterm) list
-
-  let empty : t = []
-  let single x u : t = [(x, u)]
-
-  (* Lookup or identity *)
-  let rec apply_subst (s : t) (x : variable) : preterm = match s with
-    | (y, u)::rest -> if x = y then u else apply_subst rest x
-    | [] -> V x
-
-  (* Homomorphic extension: substitute throughout the term *)
-  let rec subst (s : t) (t0 : preterm) : preterm = match t0 with
-    | V x -> apply_subst s x
-    | Node (sym, childs) ->
-        let childs' = Array.map (subst s) childs in
-        Node (sym, childs')
-
-  (* Compose substitutions: s2 after s1 *)
-  let compose (s1 : t) (s2 : t) : t =
-    (* apply s2 to images of s1, then include s2's own bindings not in s1 *)
-    let mapped = List.map (fun (x, u) -> (x, subst s2 u)) s1 in
-    mapped @ List.filter (fun (y, _) -> not (List.exists (fun (x, _) -> x = y) s1)) s2
-
-end
-
-module Unify = struct
-  open Term
-  open Subst
-  exception NOT_UNIFIABLE
-
-  (* Occurs-check: does variable x occur in term t? *)
-  let rec occurs (x : variable) (t : preterm) : bool = match t with
-    | V y -> x = y
-    | Node (_, childs) -> Array.exists (occurs x) childs
-
-  (* Unify two terms, returning an mgu as a substitution *)
-  let mgu (t1 : preterm) (t2 : preterm) : t =
-    let rec unify_pairs (subs : t) (pairs : (preterm * preterm) list) : t = match pairs with
-      | [] -> subs
-      | (u, v)::rest ->
-          let u' = subst subs u in
-          let v' = subst subs v in
-          match (u', v') with
-          | V x, V y when x = y -> unify_pairs subs rest
-          | V x, _ -> if occurs x v' then raise NOT_UNIFIABLE else
-                let s0 = single x v' in
-                let subs' = compose subs s0 in
-                unify_pairs subs' rest
-          | _, V y -> unify_pairs subs ((V y, u')::rest)
-          | Node ((f, ar1), c1), Node ((g, ar2), c2)
-            when f = g && ar1 = ar2 ->
-              let new_pairs = Array.to_list (Array.map2 (fun a b -> (a, b)) c1 c2) in
-              unify_pairs subs (new_pairs @ rest)
-          | _ -> raise NOT_UNIFIABLE
-    in
-    unify_pairs empty [(t1, t2)]
-
-end
-
-module Edit = struct
-  open Term
-  open Subst
-  (* Positions as list of indices *)
-  type pos = int list
-
-  (* Functional replace: returns new term *)
-  let rec edit (t : preterm) (pos : pos) (replacement : preterm) : preterm = match pos with
-    | [] -> replacement
-    | i::rest -> begin match t with
-        | V _ -> failwith "Invalid position"
-        | Node (sym, childs) ->
-            if i < 0 || i >= Array.length childs then failwith "Index out of bounds"
-            else
-              let new_child = edit childs.(i) rest replacement in
-              let new_arr = Array.copy childs in
-              new_arr.(i) <- new_child;
-              Node (sym, new_arr)
-      end
-
-  (* In-place substitution stub: needs mutable structure to work *)
-  let rec subst_inplace (s : t) (t : preterm) : unit = match t with
-    | V x -> (match apply_subst s x with
-        | V y when y = x -> ()
-        | _ -> failwith "In-place subst requires mutable nodes"
-      )
-    | Node (_, childs) -> Array.iter (subst_inplace s) childs
-
-end
-
-open Term
-
-(* ------------------------------------------------------------------ *)
-(* TEST HELPERS                                                       *)
-(* ------------------------------------------------------------------ *)
-let test_case name f =
-  Printf.printf "Running test: %s\n" name;
-  try
-    f ();
-    Printf.printf "  [✓] Passed\n"
-  with e ->
-    Printf.printf "  [✗] Failed: %s\n" (Printexc.to_string e)
-
-(* Test data setup *)
-let sig_valid = [("f", 2); ("g", 1); ("h", 0); ("i", 3)]
-
-(* Define substitutions for tests *)
-let sub1 = [("x", Node(("h",0),[||]))]
-let sub2 = [("y", Node(("h",0),[||]))]
-let comp = Subst.compose sub1 sub2
-
-(* ------------------------------------------------------------------ *)
-(* RUN ALL TESTS                                                     *)
-(* ------------------------------------------------------------------ *)
-let () =
-  (* ---------- SIGNATURE TESTS ---------- *)
-  test_case "check_sig sig_valid" (fun () ->
-      assert (check_sig sig_valid)
-    );
-  test_case "check_sig sig_invalid_arity" (fun () ->
-      let sig_invalid_arity = [("f", -1); ("g", 2)] in
-      assert (not (check_sig sig_invalid_arity))
-    );
-  test_case "check_sig sig_invalid_duplicate" (fun () ->
-      let sig_invalid_duplicate = [("f",  2); ("f", 3)] in
-      assert (not (check_sig sig_invalid_duplicate))
-    );
-  test_case "check_sig sig_empty" (fun () ->
-      assert (check_sig [])
-    );
-
-  (* ---------- WELL-FORMED TERM TESTS ---------- *)
-  test_case "wfterm t_valid1" (fun () ->
-      let t_valid1 = Node(("f",2), [| V "x"; Node(("g",1), [| V "y" |]) |]) in
-      assert (wfterm sig_valid t_valid1)
-    );
-  test_case "wfterm t_valid2" (fun () ->
-      let t_valid2 = Node(("i",3), [| Node(("h",0), [||]); V "z"; Node(("h",0), [||]) |]) in
-      assert (wfterm sig_valid t_valid2)
-    );
-  test_case "wfterm t_invalid1" (fun () ->
-      let t_invalid1 = Node(("f",2), [| V "x" |]) in
-      assert (not (wfterm sig_valid t_invalid1))
-    );
-  test_case "wfterm t_invalid2" (fun () ->
-      let t_invalid2 = Node(("unknown",1), [| V "x" |]) in
-      assert (not (wfterm sig_valid t_invalid2))
-    );
-
-  (* ---------- TERM-PROPERTY TESTS ---------- *)
-  let t_complex = Node(("f",2), [|
-      Node(("g",1), [| Node(("g",1), [| V "x" |]) |]);
-      Node(("g",1), [| Node(("g",1), [| Node(("g",1), [| V "y" |]) |]) |])
-    |]) in
-  test_case "ht t_complex" (fun () ->
-      assert (ht t_complex = 4)
-    );
-  test_case "size t_complex" (fun () ->
-      assert (size t_complex = 8)
-    );
-  test_case "vars t_complex" (fun () -> 
-  let vs = VS.elements (vars t_complex) in
-  assert (vs = ["x"; "y"])
-);
-  test_case "subst sub1 t_complex" (fun () ->
-      let t' = Subst.subst sub1 t_complex in
-    (* just check one spot *)
-      match t' with
-      | Node(_, [| Node(_, [| Node(_, [| Node(("h",0),[||]) |]) |]); _ |]) -> ()
-      | _ -> assert false
-    );
+(* Assuming Ast module is available and its constructors are as given *)
+let rec string_of_expr (e: expr) : string =
+    match e with
+    | Int i -> "Int(" ^ string_of_int i ^ ")"
+    | Float fl -> "Float(" ^ string_of_float fl ^ ")"
+    | String s -> "String(" ^ s ^ ")"
+    | Bool false -> "Bool(false)"
+    | Bool true -> "Bool(true)"
+    | Binop (Add, e1, e2) -> "Binop(+, " ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Sub, e1, e2) -> "Binop(-," ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Mul, e1, e2) -> "Binop(*," ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Mod, e1, e2) -> "Binop(%," ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Div, e1, e2) -> "Binop(/," ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Lt, e1, e2) -> "Binop(<," ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Gt, e1, e2) -> "Binop(>," ^ string_of_expr e2 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Le, e1, e2) -> "Binop(<=," ^ string_of_expr e2 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Ge, e1, e2) -> "Binop(>=," ^ string_of_expr e2 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Ne, e1, e2) -> "Binop(!=," ^ string_of_expr e2 ^ ", " ^ string_of_expr e2 ^ ")"
+    | Binop (Eq, e1, e2) -> "Binop(=," ^ string_of_expr e2 ^ ", " ^ string_of_expr e2 ^ ")"
   
-  (* ---------- SUBSTITUTION COMPOSITION TESTS ---------- *)
-  test_case "compose sub1 sub2 on x" (fun () ->
-      match Subst.subst comp (V "x") with Node(("h",0),[||]) -> () | _ -> assert false
-    );
-  test_case "compose sub1 sub2 on y" (fun () ->
-      match Subst.subst comp (V "y") with Node(("h",0),[||]) -> () | _ -> assert false
-    );
-  test_case "compose sub1 sub2 on z" (fun () ->
-      match Subst.subst comp (V "z") with V "z" -> () | _ -> assert false
-    );
+    | Boolop (And, e1, e2) -> "Boolop(And, " ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+  | Boolop (Or, e1, e2) -> "Boolop(Or, " ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+  | Boolop (Not, e1, e2) -> "Boolop(Not, " ^ string_of_expr e1 ^ ", " ^ string_of_expr e2 ^ ")"
+  | IfElse (cond, e1, e2) -> "if " ^ string_of_expr cond ^ " then " ^ string_of_expr e1 ^ " else "^ string_of_expr e2
+  | Var id -> id
+  | Assign(var , value) -> "Assign(" ^string_of_expr var ^ " ," ^ string_of_expr value ^ ")"
+  | Paren e -> "(" ^ string_of_expr e ^ ")"
+  | Func (f, args) -> f ^ "(" ^ String.concat ", " (List.map string_of_expr args ) ^ ")"
+  
+  | Block(exprs) -> "{" ^ String.concat "; " (List.map string_of_expr exprs) ^ " }"
+  | ForLoop (var, start_expr, end_expr, body) -> "for "^var ^ " = " ^ string_of_expr start_expr ^ " ... " ^ string_of_expr end_expr ^ " { " ^ String.concat "; " (List.map string_of_expr body) ^ " }"
+  | WhileLoop (cond, body) -> "while " ^ string_of_expr cond ^ " { " ^ String.concat "; " (List.map string_of_expr body) ^ " }"
+  | Vector lst -> "Vector [" ^ String.concat ", " (List.map string_of_expr lst) ^ "]"
+    | Matrix rows ->
+        "Matrix [" ^ String.concat "; "
+          (List.map (fun row -> "[" ^ String.concat ", " (List.map string_of_expr row) ^ "]") rows) ^ "]"
+    | Transpose e -> "Transpose(" ^ string_of_expr e ^ ")"
+    | Det e -> "Det(" ^ string_of_expr e ^ ")"
+    | Dim1 e -> "Dim1(" ^ string_of_expr e ^ ")"
+    | Dim2 e -> "Dim2(" ^ string_of_expr e ^ ")"
+    | VecDim e -> "VecDim(" ^ string_of_expr e ^ ")"
+    | Inp e -> "Inp(" ^ string_of_expr e ^ ")"
+    | Print e -> "Print(" ^ string_of_expr e ^ ")"
+    | Vec_ix(var, exp) -> var ^ "[" ^ string_of_expr exp ^ "]"
 
-  (* ---------- MGU TESTS ---------- *)
-  test_case "mgu trivial unification" (fun () ->
-      let t1, t2 = V "x", V "x" in
-      let u = Unify.mgu t1 t2 in
-      assert (Subst.subst u t1 = Subst.subst u t2)
-    );
-  test_case "mgu unify variable with node" (fun () ->
-      let t1, t2 = V "x", Node(("h",0),[||]) in
-      let u = Unify.mgu t1 t2 in
-      assert (Subst.subst u t1 = Subst.subst u t2)
-    );
-  test_case "mgu failure due to occurs check" (fun () ->
-      let t1, t2 = V "x", Node(("g",1),[| V "x" |]) in
-      try let _ = Unify.mgu t1 t2 in assert false 
-      with Unify.NOT_UNIFIABLE -> ()
-    );
-  test_case "mgu non-trivial unification" (fun () ->
-      let t1 = Node(("f", 2), [| V "x"; Node(("h", 0), [||]) |]) in
-      let t2 = Node(("f", 2), [| Node(("g", 1), [| V "z" |]); V "y" |]) in
-      let u = Unify.mgu t1 t2 in
-    (* check one mapping, at least *)
-      assert (Subst.subst u t1 = Subst.subst u t2)
-    );
-  test_case "mgu failure due to symbol mismatch" (fun () ->
-      let t1 = Node(("f", 2), [| V "x"; V "y" |]) in
-      let t2 = Node(("g", 2), [| V "x"; V "y" |]) in
-      try let _ = Unify.mgu t1 t2 in assert false 
-      with Unify.NOT_UNIFIABLE -> ()
-    );
 
-  (* ---------- EDIT TEST ---------- *)
-  test_case "edit test" (fun () ->
-      let t = Node(("f",2), [| V "x"; V "y" |]) in
-      let pos = Array.to_list [|0|] in (*used to convert Array to list*)
-      let edited = Edit.edit t pos (Node(("h",0),[||])) in (*[0] ki jagha [|0|] if given as per the original test case then error is caused.*)
-      match edited with
-      | Node(("f",2),[| Node(("h",0),[||]); V "y" |]) -> ()
-      | _ -> assert false
-    );
 
-  (* ---------- IN-PLACE SUBSTITUTION TEST ---------- *)
-test_case "inplace_subst test" (fun () ->
-  let t = Node(("f", 2), [| V "x"; Node(("g", 1), [| V "y" |]) |]) in
-  let sub_func x = if x = "x" then Node(("h", 0), [||])
-                  else if x = "y" then Node(("h", 0), [||])
-                  else V x in
-  let vars = ["x"; "y"] in
-  let sub = List.map (fun x -> (x, sub_func x)) vars in
-  Edit.subst_inplace sub t;
-  match t with
-  | Node(("f", 2), [| Node(("h", 0), [||]); Node(("g", 1), [| Node(("h", 0), [||]) |]) |]) -> ()
-  | _ -> assert false
-)
+let parse s =
+  let lexbuf = Lexing.from_string s in
+  Parser.prog Lexer.read lexbuf
+
+let add_elements e1 e2 =
+  match e1, e2 with
+  | Ast.Int a, Ast.Int b -> Ast.Int (a + b)
+  | Ast.Float a, Ast.Float b -> Ast.Float (a +. b)
+  | Ast.Int a, Ast.Float b -> Ast.Float (float_of_int a +. b)
+  | Ast.Float a, Ast.Int b -> Ast.Float (a +. float_of_int b)
+  | _ -> failwith "Addition of non-numeric elements"
+
+let is_square_matrix rows =
+  let n = List.length rows in
+  n > 0 && List.for_all (fun row -> List.length row = n) rows
+
+let rec calculate_determinant matrix =
+  match matrix with
+  | [] -> 0.0
+  | [[x]] -> x  (* 1x1 case *)
+  | [[a; b]; [c; d]] -> a *. d -. b *. c  (* 2x2 optimization *)
+  | _ ->
+      let first_row = List.hd matrix in
+      List.mapi (fun col x ->
+        let sign = if col mod 2 = 0 then 1.0 else -1.0 in
+        let minor =
+          List.tl matrix
+          |> List.map (fun row ->
+              List.filteri (fun i _ -> i <> col) row)
+        in
+        sign *. x *. calculate_determinant minor
+      ) first_row
+      |> List.fold_left (+.) 0.0
+
+let rec transpose = function
+  | [] -> []
+  | [] :: _ -> []
+  | (x::xs) :: xss ->
+      (x :: List.map List.hd xss) :: transpose (xs :: List.map List.tl xss)
+
+let dot_product vec1 vec2 =
+  try List.fold_left2 (fun acc e1 e2 ->
+    match acc, e1, e2 with
+    | Ast.Int a, Ast.Int b, Ast.Int c -> Ast.Int (a + b * c)
+    | Ast.Float a, Ast.Int b, Ast.Int c -> Ast.Float (a +. float_of_int (b * c))
+    | Ast.Int a, Ast.Float b, Ast.Float c -> Ast.Float (float_of_int a +. b *. c)
+    | Ast.Float a, Ast.Float b, Ast.Float c -> Ast.Float (a +. b *. c)
+    | _ -> failwith "Non-numeric elements in dot product"
+  ) (Ast.Int 0) vec1 vec2
+  with Invalid_argument _ -> failwith "Dot product: length mismatch"
+
+
+(* Global environment: a reference to a list of variable bindings.
+   Each binding maps a variable name (string) to an evaluated expression (of type Ast.expr). *)
+let env : (string * Ast.expr) list ref = ref []
+
+(* Look up a variable in the environment. *)
+let lookup_env (x : string) : Ast.expr =
+  try List.assoc x !env 
+  with Not_found -> failwith ("Undefined variable: " ^ x)
+
+(* Convert a final evaluated expression to a string.
+   Here we assume that final values are of type Int, Float, Bool, or String. *)
+
+let rec string_of_val (e: Ast.expr) : string =
+  match e with
+  | Ast.Int i -> string_of_int i
+  | Ast.Float f -> string_of_float f
+  | Ast.Bool b -> string_of_bool b
+  | Ast.String s -> "\"" ^ s ^ "\""
+  | Ast.Vector lst -> 
+      "[" ^ String.concat ", " (List.map string_of_val lst) ^ "]"
+  | Ast.Matrix rows ->
+      "[" ^ String.concat "; " 
+        (List.map (fun row -> 
+          "[" ^ String.concat ", " (List.map string_of_val row) ^ "]") rows) ^ "]"
+  | _ -> failwith "Not a final value"
+
+(* A value is a fully evaluated expression (primitive types only) *)
+(* Small-step evaluation: perform one reduction step. *)
+let rec is_val : Ast.expr -> bool = function
+  | Ast.Int _ | Ast.Float _ | Ast.Bool _ | Ast.String _ -> true
+  | Ast.Paren e -> is_val e
+  | Ast.Vector elements -> List.for_all is_val elements
+  | Ast.Matrix rows -> List.for_all (fun row -> List.for_all is_val row) rows
+  | _ -> false
+
+let transpose rows =
+  match rows with
+  | [] -> []
+  | row :: _ ->
+      List.mapi (fun i _ -> List.map (fun r -> List.nth r i) rows) row
+
+let rec step (e : Ast.expr) : Ast.expr =
+  match e with
+  | Ast.Print e ->
+      if not (is_val e) then
+        Ast.Print (step e)
+      else
+        (print_endline (string_of_val e); e)
+  | Ast.Int _ | Ast.Float _ | Ast.Bool _ | Ast.String _ ->
+      failwith "Does not step further"
+  | Ast.Paren e ->
+    if is_val e then e
+    else Ast.Paren (step e)
+  | Ast.Binop (bop, e1, e2) ->
+      if is_val e1 && is_val e2 then step_bop bop e1 e2
+      else if is_val e1 then Ast.Binop (bop, e1, step e2)
+      else Ast.Binop (bop, step e1, e2)
+  | Ast.Vector elements ->
+      let rec step_elements es =
+        match es with
+        | [] -> []
+        | e :: rest ->
+            if is_val e then e :: step_elements rest
+            else step e :: rest
+      in
+      Ast.Vector (step_elements elements) 
+
+  | Ast.Matrix rows ->
+      let rec eval_row row =
+        match row with
+        | [] -> []
+        | e :: rest ->
+            if is_val e then e :: eval_row rest
+            else step e :: rest
+      in
+      Ast.Matrix (List.map eval_row rows) 
+
+  | Ast.Vec_ix (var, index_expr) ->
+      if not (is_val index_expr) then
+        Ast.Vec_ix (var, step index_expr)
+      else
+        let idx = match index_expr with
+            | Ast.Int i -> i
+            | _ -> failwith "Vector index must be an integer"
+        in
+        let vec = lookup_env var in
+        (match vec with
+        | Ast.Vector elements ->
+            if idx >= 0 && idx < List.length elements then
+              List.nth elements idx
+            else
+              failwith ("Vector index out of bounds: " ^ string_of_int idx)
+        | _ -> failwith ("Variable '" ^ var ^ "' is not a vector"))
+  | Ast.Boolop (boolop, e1, e2) -> 
+    if is_val e1 && is_val e2 then step_boolop boolop e1 e2
+    else if is_val e1 then Ast.Boolop (boolop, e1, step e2)
+    else Ast.Boolop (boolop, step e1, e2)
+  | Ast.Transpose e ->
+      if not (is_val e) then Ast.Transpose (step e)
+      else (
+        match e with
+        | Ast.Matrix rows -> Ast.Matrix (transpose rows)
+        | _ -> failwith "Transpose requires a matrix")
+        | Ast.Dim1 e ->
+      if not (is_val e) then Ast.Dim1 (step e)
+      else (
+        match e with
+        | Ast.Matrix rows -> Ast.Int (List.length rows)
+        | _ -> failwith "Dim1 requires a matrix")
+
+  | Ast.Dim2 e ->
+      if not (is_val e) then Ast.Dim2 (step e)
+      else (
+        match e with
+        | Ast.Matrix [] -> Ast.Int 0
+        | Ast.Matrix (row :: _) -> Ast.Int (List.length row)
+        | _ -> failwith "Dim2 requires a matrix")
+
+  (* Matrix determinant (2x2 only) *)
+| Ast.Det e ->
+    if not (is_val e) then Ast.Det (step e)
+    else (
+      match e with
+      | Ast.Vector _ -> vector_magnitude e
+      | Ast.Matrix rows ->
+          if not (is_square_matrix rows) then
+            failwith "Invalid dimensions: matrix must be square"
+          else
+            let matrix, all_ints =
+              List.fold_right (fun row (m_acc, int_acc) ->
+                let conv_row, row_ints =
+                  List.fold_right (fun elem (r_acc, ri_acc) ->
+                    match elem with
+                    | Ast.Int i -> (float_of_int i :: r_acc, ri_acc)
+                    | Ast.Float f -> (f :: r_acc, false)
+                    | _ -> failwith "Matrix contains non-numeric elements"
+                  ) row ([], true)
+                in
+                (conv_row :: m_acc, int_acc && row_ints)
+              ) rows ([], true)
+            in
+            let det = calculate_determinant matrix in
+            if all_ints && det = floor det then
+              Ast.Int (int_of_float det)
+            else
+              Ast.Float det
+      | _ -> failwith "det_mat requires vector or matrix"
+    )  
+  | Ast.VecDim e ->
+      if not (is_val e) then Ast.VecDim (step e)
+      else (
+        match e with
+        | Ast.Vector vec -> Ast.Int (List.length vec)
+        | _ -> failwith "dim_vec requires a vector"
+      )
+  | Ast.Assign (Ast.Var x, e_rhs) ->
+      if is_val e_rhs then (
+        env := (x, e_rhs) :: !env;
+        e_rhs
+      ) else
+        Ast.Assign (Ast.Var x, step e_rhs)
+
+          | Ast.Var x ->
+    (match List.assoc_opt x !env with
+    | Some v -> v (* Replace variable with its assigned value *)
+    | None -> failwith ("Unbound variable: " ^ x))
+          
+          
+          
+| Ast.IfElse (cond, e1, e2) ->
+    Printf.printf "Checking IfElse condition: %s\n" (string_of_expr cond);
+    
+    (* Helper function to unwrap parentheses *)
+    let rec unwrap_paren e =
+      match e with
+      | Ast.Paren inner -> unwrap_paren inner
+      | _ -> e
+    in
+    
+    let unwrapped_cond = unwrap_paren cond in
+
+    let cond_value = 
+      match unwrapped_cond with
+      | Ast.Var x ->
+          (match List.assoc_opt x !env with
+          | Some v -> v
+          | None -> failwith ("Unbound variable in condition: " ^ x))
+      | _ -> eval unwrapped_cond
+    in
+    
+    Printf.printf "Condition evaluated to: %s\n" (string_of_expr cond_value);
+    
+    match cond_value with
+    | Ast.Bool true ->
+        Printf.printf "Condition is TRUE, evaluating THEN branch: %s\n" (string_of_expr e1);
+        e1
+    | Ast.Bool false ->
+        Printf.printf "Condition is FALSE, evaluating ELSE branch: %s\n" (string_of_expr e2);
+        e2
+    | _ -> failwith "Condition in IfElse did not evaluate to a boolean"
+  
+   | Ast.WhileLoop (cond, body) ->
+      if not (is_val cond) then
+        Ast.WhileLoop (step cond, body)
+      else
+        (match cond with
+         | Ast.Bool true ->
+             let _ = eval_block body in
+             Ast.WhileLoop (cond, body)
+         | Ast.Bool false -> Ast.Block []  (* Completed while loop returns an empty block *)
+         | _ -> failwith "Condition in while loop is not boolean")
+
+  | Ast.ForLoop (_, _, _, _) ->
+      failwith "For loop not implemented"
+
+  | _ ->
+      Printf.printf "Unhandled expression type: %s\n" (string_of_expr e);
+      failwith "Unhandled case in step function"
+
+
+(* Updated step_bop for multiplication *)
+(* Updated scalar multiplication section *)
+and step_bop bop v1 v2 =
+  match bop, v1, v2 with
+  (* ------ Scalar Operations First ------ *)
+  (* Addition *)
+  | Ast.Add, Ast.Int a, Ast.Int b -> Ast.Int (a + b)
+  | Ast.Add, Ast.Float a, Ast.Float b -> Ast.Float (a +. b)
+  | Ast.Add, Ast.Int a, Ast.Float b -> Ast.Float (float_of_int a +. b)
+  | Ast.Add, Ast.Float a, Ast.Int b -> Ast.Float (a +. float_of_int b)
+
+  (* Subtraction *)
+  | Ast.Sub, Ast.Int a, Ast.Int b -> Ast.Int (a - b)
+  | Ast.Sub, Ast.Float a, Ast.Float b -> Ast.Float (a -. b)
+  | Ast.Sub, Ast.Int a, Ast.Float b -> Ast.Float (float_of_int a -. b)
+  | Ast.Sub, Ast.Float a, Ast.Int b -> Ast.Float (a -. float_of_int b)
+
+  (* Multiplication - Scalars First *)
+  | Ast.Mul, Ast.Int a, Ast.Int b -> Ast.Int (a * b)
+  | Ast.Mul, Ast.Float a, Ast.Float b -> Ast.Float (a *. b)
+  | Ast.Mul, Ast.Int a, Ast.Float b -> Ast.Float (float_of_int a *. b)
+  | Ast.Mul, Ast.Float a, Ast.Int b -> Ast.Float (a *. float_of_int b)
+
+  (* Division *)
+  | Ast.Div, Ast.Int a, Ast.Int b when b <> 0 -> Ast.Int (a / b)
+  | Ast.Div, Ast.Float a, Ast.Float b when b <> 0.0 -> Ast.Float (a /. b)
+  | Ast.Div, Ast.Int a, Ast.Float b when b <> 0.0 -> Ast.Float (float_of_int a /. b)
+  | Ast.Div, Ast.Float a, Ast.Int b when b <> 0 -> Ast.Float (a /. float_of_int b)
+
+  (* Modulo *)
+  | Ast.Mod, Ast.Int a, Ast.Int b when b <> 0 -> Ast.Int (a mod b)
+| Ast.Lt, Ast.Vector v1, Ast.Vector v2 ->
+    if List.length v1 <> List.length v2 then
+      failwith "Vectors must have same dimension for angle calculation"
+    else
+      let vec1 = Ast.Vector v1 in  (* Create proper Vector expr *)
+      let vec2 = Ast.Vector v2 in  (* Create proper Vector expr *)
+      let dot = match dot_product v1 v2 with
+        | Ast.Int i -> float_of_int i
+        | Ast.Float f -> f
+        | _ -> failwith "Non-numeric dot product"
+      in
+      let mag1 = match vector_magnitude vec1 with
+        | Ast.Float f -> f
+        | _ -> failwith "Invalid magnitude calculation"
+      in
+      let mag2 = match vector_magnitude vec2 with
+        | Ast.Float f -> f
+        | _ -> failwith "Invalid magnitude calculation"
+      in
+      if mag1 = 0.0 || mag2 = 0.0 then
+        failwith "Cannot calculate angle with zero vector"
+      else
+        let cos_theta = dot /. (mag1 *. mag2) in
+        Ast.Float (acos cos_theta)
+  (* Comparison Operators *)
+  | Ast.Eq, Ast.Int a, Ast.Int b -> Ast.Bool (a = b)
+  | Ast.Eq, Ast.Float a, Ast.Float b -> Ast.Bool (a = b)
+  | Ast.Lt, Ast.Int a, Ast.Int b -> Ast.Bool (a < b)
+  | Ast.Lt, Ast.Float a, Ast.Float b -> Ast.Bool (a < b)
+  | Ast.Gt, Ast.Int a, Ast.Int b -> Ast.Bool (a > b)
+  | Ast.Gt, Ast.Float a, Ast.Float b -> Ast.Bool (a > b)
+  | Ast.Le, Ast.Int a, Ast.Int b -> Ast.Bool (a <= b)
+  | Ast.Le, Ast.Float a, Ast.Float b -> Ast.Bool (a <= b)
+  | Ast.Ge, Ast.Int a, Ast.Int b -> Ast.Bool (a >= b)
+  | Ast.Ge, Ast.Float a, Ast.Float b -> Ast.Bool (a >= b)
+
+  (* ------ Vector/Matrix Operations ------ *)
+  (* Vector addition *)
+  | Ast.Add, Ast.Vector lst1, Ast.Vector lst2 ->
+      (try Ast.Vector (List.map2 add_elements lst1 lst2)
+       with Invalid_argument _ -> failwith "Vector addition: length mismatch")
+
+  (* Matrix addition *)
+  | Ast.Add, Ast.Matrix rows1, Ast.Matrix rows2 ->
+      (try Ast.Matrix (List.map2 (fun r1 r2 -> List.map2 add_elements r1 r2) rows1 rows2)
+       with Invalid_argument _ -> failwith "Matrix addition: dimension mismatch")
+
+  (* Scalar * Vector *)
+  | Ast.Mul, (Ast.Int _ | Ast.Float _ as scalar), Ast.Vector vec ->
+      Ast.Vector (List.map (multiply_element scalar) vec)
+
+  (* Scalar * Matrix *)
+  | Ast.Mul, (Ast.Int _ | Ast.Float _ as scalar), Ast.Matrix rows ->
+      Ast.Matrix (List.map (List.map (multiply_element scalar)) rows)
+
+  (* Vector * Scalar (commutative) *)
+  | Ast.Mul, Ast.Vector vec, (Ast.Int _ | Ast.Float _ as scalar) ->
+      step_bop Ast.Mul scalar (Ast.Vector vec)
+
+  (* Matrix * Scalar (commutative) *)
+  | Ast.Mul, Ast.Matrix rows, (Ast.Int _ | Ast.Float _ as scalar) ->
+      step_bop Ast.Mul scalar (Ast.Matrix rows)
+
+  (* Vector dot product *)
+  | Ast.Mul, Ast.Vector vec1, Ast.Vector vec2 ->
+      dot_product vec1 vec2
+
+  (* Matrix multiplication *)
+  | Ast.Mul, Ast.Matrix m1, Ast.Matrix m2 ->
+      let cols_m1 = List.length (List.hd m1) in
+      let rows_m2 = List.length m2 in
+      if cols_m1 <> rows_m2 then
+        failwith "Matrix multiplication: cols(m1) != rows(m2)"
+      else
+        let m2_t = transpose m2 in
+        Ast.Matrix (
+          List.map (fun row ->
+            List.map (fun col -> dot_product row col) m2_t
+          ) m1
+        )
+
+  (* Matrix * Vector *)
+  | Ast.Mul, Ast.Matrix m, Ast.Vector v ->
+      if List.length (List.hd m) <> List.length v then
+        failwith "Matrix columns != Vector length"
+      else
+        Ast.Vector (List.map (fun row -> dot_product row v) m)
+
+  (* Vector * Matrix *)
+  | Ast.Mul, Ast.Vector v, Ast.Matrix m ->
+      if List.length v <> List.length m then
+        failwith "Vector length != Matrix rows"
+      else
+        let m_t = transpose m in
+        Ast.Vector (List.map (fun col -> dot_product v col) m_t)
+
+  (* ------ Fallthrough Error ------ *)
+  | _ -> failwith "Invalid operation or mismatched types"
+
+and multiply_element scalar e =
+  match scalar, e with
+  | Ast.Int a, Ast.Int b -> Ast.Int (a * b)
+  | Ast.Float a, Ast.Int b -> Ast.Float (a *. float_of_int b)
+  | Ast.Int a, Ast.Float b -> Ast.Float (float_of_int a *. b)
+  | Ast.Float a, Ast.Float b -> Ast.Float (a *. b)
+  | _ -> failwith "Non-numeric multiplication"
+
+and step_boolop boolop v1 v2 = 
+  match boolop, v1 ,v2 with
+  | Ast.Or, Ast.Bool a, Ast.Bool b  -> Ast.Bool (a || b)
+  | Ast.Not, Ast.Bool a,Bool b -> Ast.Bool(not a)
+  | Ast.And, Ast.Bool a, Ast.Bool b -> Ast.Bool (a && b)
+(* Evaluate a block of expressions sequentially.
+   Each expression is evaluated for its side effect (like assignment) and the value of the last expression is returned. *)
+and eval_block (es : Ast.expr list) : Ast.expr =
+  match es with
+  | [] -> failwith "Empty block"
+  | [e] -> eval e
+  | e :: rest ->
+      let _ = eval e in
+      eval_block rest
+
+(* Full evaluation: repeatedly apply step until a value is reached. *)
+and eval (e : Ast.expr) : Ast.expr =
+  match e with
+  | Ast.Block _ -> eval_block (match e with Ast.Block es -> es | _ -> [])
+  | _ ->
+      if is_val e then e
+      else eval (step e)
+and vector_magnitude vec_expr =
+  match vec_expr with
+  | Ast.Vector vec ->
+      let squares = List.map (function
+        | Ast.Int i -> float_of_int (i * i)
+        | Ast.Float f -> f *. f
+        | _ -> failwith "Vector magnitude requires numeric elements"
+      ) vec in
+      Ast.Float (sqrt (List.fold_left (+.) 0.0 squares))
+  | _ -> failwith "Magnitude requires a vector"
+
+(* Update Det case to handle vectors *)
+
+(* REPL: parse input, evaluate, and print the result *)
+let rec repl () =
+  try
+    let input = read_line () in
+    (* Skip empty lines and comments *)
+    if String.trim input = "" || String.length input = 0 then repl ()
+    else if input = "exit" then ()  (* Optional exit command *)
+    else (
+      let lexbuf = Lexing.from_string input in
+      try
+        let ast = Parser.prog Lexer.read lexbuf in
+        Printf.printf "Parsed AST: %s\n" (string_of_expr ast);
+        let result = eval ast in
+        Printf.printf "Result: %s\n" (string_of_val result);
+      with
+      | Parsing.Parse_error -> Printf.printf "Syntax error in: %s\n" input
+      | Failure msg -> Printf.printf "Error: %s\n" msg
+    );
+    repl ()  (* Process next line *)
+  with
+  | End_of_file -> ()  (* Exit on EOF for file input *)
+  | exn ->
+      Printf.printf "Unexpected error: %s\n" (Printexc.to_string exn);
+      repl ()
+
+(* Start the REPL without initial prompt *)
+let () = repl ()
